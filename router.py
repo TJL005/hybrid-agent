@@ -32,7 +32,14 @@ def _extract_json(raw: str) -> dict[str, Any]:
     try:
         data = json.loads(text)
     except json.JSONDecodeError as err:
-        raise HybridAgentError(f"router returned unparseable JSON: {err}") from err
+        # Model may wrap the JSON in prose; try the outermost braces.
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            raise HybridAgentError(f"router returned unparseable JSON: {err}") from err
+        try:
+            data = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            raise HybridAgentError(f"router returned unparseable JSON: {err}") from err
     if not isinstance(data, dict):
         raise HybridAgentError("router output must be a JSON object")
     return data
@@ -40,7 +47,8 @@ def _extract_json(raw: str) -> dict[str, Any]:
 
 def parse_router_decision(raw: str) -> dict[str, Any]:
     data = _extract_json(raw)
-    route = data.get("route", "pipeline")
+    route = data.get("route")
+    route = route.strip().lower() if isinstance(route, str) else ""
     if route not in ("direct", "single", "pipeline"):
         route = "pipeline"
     data["route"] = route
@@ -65,5 +73,5 @@ def route_request(
     try:
         raw = model_caller(router_model, ROUTER_SYSTEM, user_message)
         return parse_router_decision(raw)
-    except HybridAgentError:
-        return {"route": "pipeline", "reason": "router failed; escalating to pipeline"}
+    except Exception as err:  # any router failure escalates instead of crashing the run
+        return {"route": "pipeline", "reason": f"router failed ({err}); escalating to pipeline"}

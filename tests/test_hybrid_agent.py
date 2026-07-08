@@ -1,9 +1,8 @@
-import io
-from unittest.mock import patch
+import json
 
 import pytest
 
-from hybrid_agent import HybridAgent, HybridAgentError, parse_task_list
+from hybrid_agent import MAX_TASKS, HybridAgent, HybridAgentError, parse_task_list
 from capabilities import CapabilityRegistry
 from executors import create_llm_capability
 
@@ -64,6 +63,54 @@ def test_orchestrator_json_parsing_unknown_capability():
 def test_orchestrator_json_parsing_invalid():
     with pytest.raises(HybridAgentError):
         parse_task_list("not json")
+
+
+def test_orchestrator_json_parsing_with_surrounding_prose():
+    raw = f"Here are the tasks:\n{TASKS_JSON}\nHope that helps!"
+    tasks = parse_task_list(raw)
+    assert len(tasks) == 2
+
+
+def test_orchestrator_rejects_non_dict_task_items():
+    # A bare string would pass a naive `"id" in task` substring check.
+    with pytest.raises(HybridAgentError, match="JSON object"):
+        parse_task_list('["id title prompt"]')
+
+
+def test_orchestrator_rejects_too_many_tasks():
+    tasks = [{"id": f"t{i}", "title": "T", "prompt": "p"} for i in range(MAX_TASKS + 1)]
+    with pytest.raises(HybridAgentError, match="max"):
+        parse_task_list(json.dumps(tasks))
+
+
+def test_null_capability_defaults_to_llm():
+    registry = CapabilityRegistry.default()
+    raw = '[{"id": "1", "title": "T", "prompt": "p", "capability": null}]'
+    tasks = parse_task_list(raw, registry)
+    assert tasks[0]["capability"] == "llm"
+
+
+def test_worker_exception_wrapped_as_hybrid_agent_error():
+    def caller(model: str, system: str, user: str) -> str:
+        if "strategic advisor" in system.lower():
+            return "Strategy"
+        if "task orchestrator" in system.lower():
+            return TASKS_JSON
+        if "focused worker" in system.lower():
+            raise RuntimeError("boom")
+        return "unexpected"
+
+    agent = HybridAgent(model_caller=caller)
+    with pytest.raises(HybridAgentError, match="task-1"):
+        agent.process("test")
+
+
+def test_runs_used_counts_worker_tasks():
+    caller, _ = make_mock_caller()
+    agent = HybridAgent(model_caller=caller)
+    agent.process("Write a launch plan")
+    # advisor + orchestrator + 2 workers + synthesis
+    assert agent.runs_used == 5
 
 
 def test_empty_task_list_raises():

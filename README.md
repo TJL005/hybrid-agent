@@ -45,9 +45,19 @@ brain stats     # tier distribution + runs consumed (watch for over-escalation)
 |------|------|------|
 | `direct` | 1 | Simple questions, greetings, one-shot answers |
 | `single` | 2 | One clear action mapped to a capability |
-| `pipeline` | 3+N | Multi-part work needing advisor + workers |
+| `pipeline` | 4+N | Router + advisor + orchestrator + N workers + synthesis |
 
-Repeat requests can cost **0 runs** via router cache (1h TTL). Use `--fresh` to bypass.
+Repeat requests can cost **0 runs** via router cache (1h TTL, expired entries auto-pruned). Use `--fresh` to bypass.
+
+### Guardrails & failure handling
+
+- Router failures (bad JSON, exceptions) escalate to `pipeline` instead of crashing; JSON wrapped in prose or fences is tolerated.
+- A `direct` route with no usable answer downgrades to a `single` llm call; an unknown `single` capability falls back to `llm`.
+- Orchestrator output is validated: max **5 tasks**, max **2 `cursor_agent` tasks**, tasks must be JSON objects with `id`/`title`/`prompt`.
+- Worker/executor failures are wrapped in `HybridAgentError` with the failing task id, so the CLI always exits cleanly.
+- Cache and run-log corruption is tolerated (bad entries skipped); cache writes are atomic.
+- `brain stats` reads the local run log only — works without `cursor-sdk` or an API key.
+- `brain loop` rejects zero/negative intervals and negative `--max-runs`.
 
 ### Enable real file edits
 
@@ -98,7 +108,7 @@ Runs default to **plan mode** (read-only). Pass `mode="agent"` to `HybridAgent` 
 
 ## Tests
 
-Unit tests use mocks — no live API calls:
+Unit tests use mocks — no live API calls, and they pass with or without `cursor-sdk` installed:
 
 ```bash
 pytest

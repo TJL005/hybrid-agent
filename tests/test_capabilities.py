@@ -1,6 +1,6 @@
 import pytest
 
-from capabilities import Capability, CapabilityRegistry
+from capabilities import CapabilityRegistry
 from executors import ExecutorContext, create_llm_capability
 
 

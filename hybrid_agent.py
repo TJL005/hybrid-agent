@@ -7,6 +7,7 @@ from errors import HybridAgentError
 from executors import ExecutorContext
 
 DEFAULT_MODEL = "composer-2.5"
+MAX_TASKS = 5
 MAX_CURSOR_AGENT_TASKS = 2
 
 ADVISOR_SYSTEM = """You are a strategic advisor. Analyze the user's request and produce a concise strategy brief covering:
@@ -34,7 +35,7 @@ def orchestrator_system(registry: CapabilityRegistry) -> str:
 
 
 def parse_task_list(raw: str, registry: CapabilityRegistry | None = None) -> list[dict[str, Any]]:
-    """Parse orchestrator output into a task list, tolerating markdown fences."""
+    """Parse orchestrator output into a task list, tolerating markdown fences and prose."""
     text = raw.strip()
     fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
     if fence_match:
@@ -42,13 +43,28 @@ def parse_task_list(raw: str, registry: CapabilityRegistry | None = None) -> lis
     try:
         tasks = json.loads(text)
     except json.JSONDecodeError as err:
-        raise HybridAgentError(f"orchestrator returned unparseable JSON: {err}") from err
+        # Model may wrap the JSON in prose; try the outermost brackets.
+        start, end = text.find("["), text.rfind("]")
+        if start == -1 or end <= start:
+            raise HybridAgentError(f"orchestrator returned unparseable JSON: {err}") from err
+        try:
+            tasks = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            raise HybridAgentError(f"orchestrator returned unparseable JSON: {err}") from err
     if not isinstance(tasks, list):
         raise HybridAgentError("Orchestrator output must be a JSON array")
+    if len(tasks) > MAX_TASKS:
+        raise HybridAgentError(
+            f"Orchestrator returned {len(tasks)} tasks; max is {MAX_TASKS}"
+        )
     for task in tasks:
+        if not isinstance(task, dict):
+            raise HybridAgentError("Each task must be a JSON object")
         if not all(key in task for key in ("id", "title", "prompt")):
             raise HybridAgentError("Each task must have id, title, and prompt")
-        capability = task.get("capability", "llm")
+        capability = task.get("capability") or "llm"
+        if not isinstance(capability, str):
+            raise HybridAgentError(f"Task capability must be a string, got: {capability!r}")
         if registry is not None and not registry.has(capability):
             raise HybridAgentError(f"Unknown capability: {capability}")
         task["capability"] = capability
@@ -103,7 +119,7 @@ class HybridAgent:
             raise HybridAgentError(f"{stage} failed: {err}") from err
 
     def _execute_task(self, strategy: str, task: dict[str, Any]) -> str:
-        capability_name = task.get("capability", "llm")
+        capability_name = task.get("capability") or "llm"
         try:
             capability = self.registry.get(capability_name)
         except KeyError as err:
@@ -118,7 +134,15 @@ class HybridAgent:
             api_key=self.api_key,
             allow_agent_runs=self.allow_agent_runs,
         )
-        return capability.executor(ctx)
+        self._runs_used += 1
+        try:
+            return capability.executor(ctx)
+        except HybridAgentError:
+            raise
+        except Exception as err:
+            raise HybridAgentError(
+                f"task {task.get('id', '?')} ({capability_name}) failed: {err}"
+            ) from err
 
     def process(self, user_message: str, recent_context: str = "") -> str:
         self._runs_used = 0
@@ -142,10 +166,7 @@ class HybridAgent:
             f"Strategy brief:\n{strategy}\n\nOriginal request:\n{user_message}",
         )
 
-        try:
-            tasks = parse_task_list(orchestrator_raw, self.registry)
-        except (json.JSONDecodeError, HybridAgentError) as err:
-            raise HybridAgentError(f"orchestrator returned unparseable JSON: {err}") from err
+        tasks = parse_task_list(orchestrator_raw, self.registry)
 
         if not tasks:
             raise HybridAgentError("orchestrator returned an empty task list")

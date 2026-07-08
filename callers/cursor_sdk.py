@@ -1,5 +1,5 @@
 import os
-from typing import Callable
+from typing import Any, Callable
 
 from errors import HybridAgentError
 
@@ -40,18 +40,14 @@ def create_cursor_caller(
 
     def cursor_caller(model_name: str, system_prompt: str, user_message: str) -> str:
         prompt = f"<role_instructions>\n{system_prompt}\n</role_instructions>\n\n{user_message}"
-        options = AgentOptions(
-            model=model_name,
-            mode=mode,
-            local=LocalAgentOptions(cwd=workdir),
-        )
+        options_kwargs: dict[str, Any] = {
+            "model": model_name,
+            "mode": mode,
+            "local": LocalAgentOptions(cwd=workdir),
+        }
         if resolved_key:
-            options = AgentOptions(
-                model=model_name,
-                mode=mode,
-                local=LocalAgentOptions(cwd=workdir),
-                api_key=resolved_key,
-            )
+            options_kwargs["api_key"] = resolved_key
+        options = AgentOptions(**options_kwargs)
 
         try:
             result = Agent.prompt(prompt, options)
