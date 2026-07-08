@@ -67,7 +67,7 @@ class Brain:
         if self.verbose:
             print(message)
 
-    def _execute_capability(self, capability_name: str, input_text: str, strategy: str = "") -> str:
+    def _execute_capability(self, capability_name: str, input_text: str) -> str:
         if not self.registry.has(capability_name):
             raise HybridAgentError(f"Unknown capability: {capability_name}")
 
@@ -79,7 +79,7 @@ class Brain:
         }
         capability = self.registry.get(capability_name)
         ctx = ExecutorContext(
-            strategy=strategy or input_text,
+            strategy="",
             task=task,
             model_caller=self.model_caller,
             worker_model=self.agent.worker_model,
@@ -87,44 +87,38 @@ class Brain:
             api_key=self.api_key,
             allow_agent_runs=self.allow_agent_runs,
         )
-        return capability.executor(ctx)
+        try:
+            return capability.executor(ctx)
+        except HybridAgentError:
+            raise
+        except Exception as err:
+            raise HybridAgentError(f"capability '{capability_name}' failed: {err}") from err
 
     def run(self, request: str, fresh: bool = False) -> str:
         runs_used = 0
         actions: list[str] = []
         recent = self.memory.recent_context()
 
+        decision: dict[str, Any] | None = None
         if not fresh:
             cached = self.memory.get_cached(request)
-            if cached and cached.get("answer") is not None:
-                decision = cached.get("decision", {})
-                self.memory.append_run(
-                    request=request,
-                    route=decision.get("route", "direct"),
-                    runs_used=0,
-                    result_summary=cached["answer"],
-                    actions=["cache_hit"],
-                )
-                return cached["answer"]
+            if cached:
+                answer = cached.get("answer")
+                if isinstance(answer, str) and answer.strip():
+                    cached_decision = cached.get("decision") or {}
+                    self.memory.append_run(
+                        request=request,
+                        route=cached_decision.get("route", "direct"),
+                        runs_used=0,
+                        result_summary=answer,
+                        actions=["cache_hit"],
+                    )
+                    return answer
+                if isinstance(cached.get("decision"), dict):
+                    decision = cached["decision"]
+                    self._log(f"=== Router (cached: {decision.get('route')}) ===")
 
-        decision: dict[str, Any]
-        if not fresh:
-            cached = self.memory.get_cached(request)
-            if cached and cached.get("decision"):
-                decision = cached["decision"]
-                self._log(f"=== Router (cached: {decision.get('route')}) ===")
-            else:
-                self._log("=== Router ===")
-                decision = route_request(
-                    request,
-                    model_caller=self.model_caller,
-                    router_model=self.router_model,
-                    registry=self.registry,
-                    recent_context=recent,
-                )
-                runs_used += 1
-                self.memory.set_cached(request, decision)
-        else:
+        if decision is None:
             self._log("=== Router ===")
             decision = route_request(
                 request,
@@ -139,30 +133,41 @@ class Brain:
         route = decision.get("route", "pipeline")
 
         if route == "direct":
-            answer = decision.get("answer", "")
-            self.memory.set_cached(request, decision, answer=answer)
-            self.memory.append_run(
-                request=request,
-                route="direct",
-                runs_used=runs_used,
-                result_summary=answer,
-            )
-            return answer
+            answer = decision.get("answer")
+            if isinstance(answer, str) and answer.strip():
+                self.memory.set_cached(request, decision, answer=answer)
+                self.memory.append_run(
+                    request=request,
+                    route="direct",
+                    runs_used=runs_used,
+                    result_summary=answer,
+                )
+                return answer
+            # Router promised an inline answer but did not provide a usable one.
+            self._log("Router chose direct without an answer; downgrading to single llm")
+            route = "single"
+            decision = {**decision, "capability": "llm", "input": request}
 
         if route == "single":
-            capability_name = decision.get("capability", "llm")
-            input_text = decision.get("input", request)
-            actions.append(f"single:{capability_name}")
-            result = self._execute_capability(capability_name, input_text)
-            runs_used += 1
-            self.memory.append_run(
-                request=request,
-                route="single",
-                runs_used=runs_used,
-                result_summary=result,
-                actions=actions,
-            )
-            return result
+            capability_name = decision.get("capability")
+            if not isinstance(capability_name, str) or not self.registry.has(capability_name):
+                capability_name = "llm" if self.registry.has("llm") else None
+            if capability_name is not None:
+                input_text = decision.get("input")
+                if not isinstance(input_text, str) or not input_text.strip():
+                    input_text = request
+                actions.append(f"single:{capability_name}")
+                result = self._execute_capability(capability_name, input_text)
+                runs_used += 1
+                self.memory.append_run(
+                    request=request,
+                    route="single",
+                    runs_used=runs_used,
+                    result_summary=result,
+                    actions=actions,
+                )
+                return result
+            self._log("No usable capability for single route; escalating to pipeline")
 
         self._log("=== Pipeline ===")
         actions.append("pipeline")
