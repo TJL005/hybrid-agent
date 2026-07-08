@@ -1,7 +1,7 @@
 import os
 from typing import Callable
 
-from hybrid_agent import HybridAgentError
+from errors import HybridAgentError
 
 try:
     from cursor_sdk import Agent, AgentOptions, Cursor, CursorAgentError, LocalAgentOptions

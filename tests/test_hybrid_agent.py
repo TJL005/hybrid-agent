@@ -4,6 +4,8 @@ from unittest.mock import patch
 import pytest
 
 from hybrid_agent import HybridAgent, HybridAgentError, parse_task_list
+from capabilities import CapabilityRegistry
+from executors import create_llm_capability
 
 
 TASKS_JSON = """[
@@ -49,6 +51,14 @@ def test_orchestrator_json_parsing_fenced():
     fenced = f"```json\n{TASKS_JSON}\n```"
     tasks = parse_task_list(fenced)
     assert len(tasks) == 2
+
+
+def test_orchestrator_json_parsing_unknown_capability():
+    registry = CapabilityRegistry()
+    registry.register(create_llm_capability())
+    bad_json = '[{"id": "1", "title": "T", "prompt": "p", "capability": "missing"}]'
+    with pytest.raises(HybridAgentError, match="Unknown capability"):
+        parse_task_list(bad_json, registry)
 
 
 def test_orchestrator_json_parsing_invalid():
