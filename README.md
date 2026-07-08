@@ -21,77 +21,102 @@ export CURSOR_API_KEY=cursor_your_key_here
 
 Usage draws from the same request pools as the Cursor IDE and appears in your usage dashboard under the SDK tag.
 
-## Usage
+## Brain CLI (recommended entry point)
+
+Everything routes through the brain. **Composer 2.5 is always the first model to touch a request** (configurable via `router_model` or `BRAIN_ROUTER_MODEL`).
+
+```bash
+# One-shot
+brain "Write a launch plan for a new AI coding tool"
+brain --verbose "Create a marketing strategy for my SaaS product"
+brain --fresh "Run security review"          # bypass cache
+
+# Recurring loop
+brain loop "Check open PRs and summarize blockers" --every 15m --max-runs 20
+
+# Utilities
+brain models    # list model slugs on your subscription
+brain stats     # tier distribution + runs consumed (watch for over-escalation)
+```
+
+### Routing tiers (cheapest first)
+
+| Tier | Runs | When |
+|------|------|------|
+| `direct` | 1 | Simple questions, greetings, one-shot answers |
+| `single` | 2 | One clear action mapped to a capability |
+| `pipeline` | 3+N | Multi-part work needing advisor + workers |
+
+Repeat requests can cost **0 runs** via router cache (1h TTL). Use `--fresh` to bypass.
+
+### Enable real file edits
+
+`cursor_agent` capability runs a full Cursor SDK agent (`mode=agent`). Opt in explicitly:
+
+```bash
+brain --allow-agent-runs "Refactor auth middleware and add tests"
+```
+
+## Python API
+
+```python
+from brain import Brain
+
+brain = Brain(
+    router_model="composer-2.5",      # first model to touch every request
+    advisor_model="glm-5.2-max",      # escalate up for complex work
+    worker_model="composer-2.5",      # delegate down for workers
+    verbose=True,
+)
+result = brain.run("Create a marketing strategy for my SaaS product")
+```
+
+Legacy pipeline (no router):
 
 ```python
 from hybrid_agent import HybridAgent
 
-# Default — all stages use composer-2.5
 agent = HybridAgent(verbose=True)
 result = agent.process("Write a launch plan for a new AI coding tool")
-
-# Cheap preset — GLM planner + Composer workers
-cheap_agent = HybridAgent(
-    advisor_model="glm-5.2",
-    orchestrator_model="glm-5.2",
-    worker_model="composer-2.5",
-    verbose=True,
-)
-result = cheap_agent.process("Create a marketing strategy for my SaaS product")
 ```
 
-Run the included examples:
+## Capabilities
 
-```bash
-python examples/default_agent.py
-python examples/cheap_agent.py
-```
+| Capability | Description |
+|------------|-------------|
+| `llm` | Text/analysis via model worker (default) |
+| `cursor_agent` | Full Cursor SDK agent run against repo (requires `allow_agent_runs=True`) |
 
-## Check available models
-
-Model slugs vary by account. List what's available on your subscription:
-
-```bash
-python examples/list_models.py
-```
-
-If `glm-5.2` fails, try `glm-5.2-max` or another slug from the list.
-
-## How it works
+## How the pipeline works
 
 ```
-User request → Advisor → Orchestrator (JSON tasks) → Workers → Synthesis → Final answer
+Request → Router (composer-2.5) → direct | single | pipeline
+  pipeline: Advisor → Orchestrator (JSON tasks) → Workers → Synthesis
 ```
 
-| Stage | Default model | Role |
-|-------|---------------|------|
-| Advisor | `composer-2.5` | Strategic planning |
-| Orchestrator | `composer-2.5` | Break work into 1–5 subtasks |
-| Worker | `composer-2.5` | Execute each subtask |
-| Synthesis | orchestrator model | Merge outputs into final answer |
-
-Runs default to **plan mode** (read-only). Pass `mode="agent"` to `HybridAgent` if workers should modify files.
-
-Each `process()` call makes 3 + N Cursor SDK runs (N = number of tasks, capped at 5).
+Runs default to **plan mode** (read-only). Pass `mode="agent"` to `HybridAgent` or use `--allow-agent-runs` on the brain for file edits.
 
 ## Tests
 
-Unit tests use a mock `model_caller` — no live API calls:
+Unit tests use mocks — no live API calls:
 
 ```bash
 pytest
 ```
 
-Cursor caller tests mock `Agent.prompt` to verify error mapping without billing your subscription.
-
 ## Project layout
 
 ```
 hybrid-agent/
-├── hybrid_agent.py       # Core pipeline
+├── brain.py            # Brain router + entry point
+├── hybrid_agent.py     # Advisor/worker pipeline engine
+├── capabilities.py   # Capability registry
+├── executors.py      # llm + cursor_agent executors
+├── router.py         # Fast-path classifier
+├── memory.py         # Run log + cache
+├── cli.py            # brain CLI
 ├── callers/
-│   └── cursor_sdk.py   # Default Cursor SDK caller
+│   └── cursor_sdk.py
 ├── examples/
-├── tests/
-└── pyproject.toml
+└── tests/
 ```
