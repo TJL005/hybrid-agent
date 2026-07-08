@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -13,7 +13,22 @@ class FakeCursorAgentError(Exception):
         self.message = message
 
 
+class FakeLocalAgentOptions:
+    def __init__(self, cwd=None):
+        self.cwd = cwd
+
+
+class FakeAgentOptions:
+    def __init__(self, model=None, mode=None, local=None, api_key=None):
+        self.model = model
+        self.mode = mode
+        self.local = local
+        self.api_key = api_key
+
+
 @patch("callers.cursor_sdk.CursorAgentError", FakeCursorAgentError)
+@patch("callers.cursor_sdk.AgentOptions", FakeAgentOptions)
+@patch("callers.cursor_sdk.LocalAgentOptions", FakeLocalAgentOptions)
 @patch("callers.cursor_sdk.Agent")
 def test_cursor_caller_returns_result(mock_agent):
     mock_agent.prompt.return_value = SimpleNamespace(status="finished", result="hello", id="run-1")
@@ -33,6 +48,8 @@ def test_cursor_caller_returns_result(mock_agent):
 
 
 @patch("callers.cursor_sdk.CursorAgentError", FakeCursorAgentError)
+@patch("callers.cursor_sdk.AgentOptions", FakeAgentOptions)
+@patch("callers.cursor_sdk.LocalAgentOptions", FakeLocalAgentOptions)
 @patch("callers.cursor_sdk.Agent")
 def test_cursor_caller_maps_run_error(mock_agent):
     mock_agent.prompt.return_value = SimpleNamespace(status="error", result=None, id="run-2")
@@ -43,6 +60,8 @@ def test_cursor_caller_maps_run_error(mock_agent):
 
 
 @patch("callers.cursor_sdk.CursorAgentError", FakeCursorAgentError)
+@patch("callers.cursor_sdk.AgentOptions", FakeAgentOptions)
+@patch("callers.cursor_sdk.LocalAgentOptions", FakeLocalAgentOptions)
 @patch("callers.cursor_sdk.Agent")
 def test_cursor_caller_maps_startup_error(mock_agent):
     mock_agent.prompt.side_effect = FakeCursorAgentError("auth failed")

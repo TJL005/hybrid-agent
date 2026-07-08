@@ -13,6 +13,19 @@ class FakeCursorAgentError(Exception):
         self.message = message
 
 
+class FakeLocalAgentOptions:
+    def __init__(self, cwd=None):
+        self.cwd = cwd
+
+
+class FakeAgentOptions:
+    def __init__(self, model=None, mode=None, local=None, api_key=None):
+        self.model = model
+        self.mode = mode
+        self.local = local
+        self.api_key = api_key
+
+
 def test_cursor_agent_requires_opt_in():
     ctx = ExecutorContext(
         strategy="s",
@@ -26,6 +39,8 @@ def test_cursor_agent_requires_opt_in():
 
 
 @patch("executors.CursorAgentError", FakeCursorAgentError)
+@patch("executors.AgentOptions", FakeAgentOptions)
+@patch("executors.LocalAgentOptions", FakeLocalAgentOptions)
 @patch("executors.Agent")
 def test_cursor_agent_executor_success(mock_agent):
     mock_agent.prompt.return_value = SimpleNamespace(status="finished", result="agent done", id="r1")
@@ -45,6 +60,8 @@ def test_cursor_agent_executor_success(mock_agent):
 
 
 @patch("executors.CursorAgentError", FakeCursorAgentError)
+@patch("executors.AgentOptions", FakeAgentOptions)
+@patch("executors.LocalAgentOptions", FakeLocalAgentOptions)
 @patch("executors.Agent")
 def test_cursor_agent_maps_startup_error(mock_agent):
     mock_agent.prompt.side_effect = FakeCursorAgentError("auth failed")
@@ -56,4 +73,21 @@ def test_cursor_agent_maps_startup_error(mock_agent):
         allow_agent_runs=True,
     )
     with pytest.raises(HybridAgentError, match="cursor_agent startup failed"):
+        cursor_agent_executor(ctx)
+
+
+@patch("executors.CursorAgentError", FakeCursorAgentError)
+@patch("executors.AgentOptions", FakeAgentOptions)
+@patch("executors.LocalAgentOptions", FakeLocalAgentOptions)
+@patch("executors.Agent")
+def test_cursor_agent_maps_unfinished_run(mock_agent):
+    mock_agent.prompt.return_value = SimpleNamespace(status="error", result=None, id="r2")
+    ctx = ExecutorContext(
+        strategy="s",
+        task={"id": "1", "title": "T", "prompt": "p"},
+        model_caller=lambda *a: "x",
+        worker_model="composer-2.5",
+        allow_agent_runs=True,
+    )
+    with pytest.raises(HybridAgentError, match="cursor_agent run error"):
         cursor_agent_executor(ctx)
