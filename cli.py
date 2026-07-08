@@ -74,8 +74,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _build_base_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="brain", description="HybridAgent brain CLI")
+def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--verbose", action="store_true", help="Print stage boundaries")
     parser.add_argument("--fresh", action="store_true", help="Bypass router cache")
     parser.add_argument(
@@ -83,6 +82,11 @@ def _build_base_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable cursor_agent capability (can edit files)",
     )
+
+
+def _build_base_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="brain", description="HybridAgent brain CLI")
+    _add_common_args(parser)
     return parser
 
 
@@ -99,13 +103,12 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_stats(Brain())
 
     if argv[0] == "loop":
-        parser = _build_base_parser()
-        loop_parser = argparse.ArgumentParser(prog="brain loop", parents=[parser], add_help=True)
-        loop_parser.add_argument("command", nargs="?", default="loop", help=argparse.SUPPRESS)
+        loop_parser = argparse.ArgumentParser(prog="brain loop")
+        _add_common_args(loop_parser)
         loop_parser.add_argument("request", help="Request to run repeatedly")
         loop_parser.add_argument("--every", type=_parse_duration, required=True, help="Interval (e.g. 15m)")
         loop_parser.add_argument("--max-runs", type=int, default=0, help="Stop after N runs (0 = forever)")
-        args = loop_parser.parse_args(argv)
+        args = loop_parser.parse_args(argv[1:])
         return _cmd_loop(args)
 
     parser = _build_base_parser()

@@ -26,9 +26,6 @@ SYNTHESIS_SYSTEM = """You are a synthesis editor. Merge the worker outputs into 
 Preserve important details. Remove redundancy. Match the tone of the original request."""
 
 
-from errors import HybridAgentError
-
-
 def orchestrator_system(registry: CapabilityRegistry) -> str:
     capability_block = registry.descriptions_for_prompt()
     if capability_block:

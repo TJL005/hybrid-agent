@@ -37,8 +37,6 @@ class Brain:
         self.memory = memory or RunMemory()
         self.registry = registry or self._default_registry(allow_agent_runs)
         self.model_caller = model_caller
-        self._model_caller_mode = "plan"
-        self._external_caller = model_caller is not None
 
         if model_caller is None:
             from callers.cursor_sdk import create_cursor_caller

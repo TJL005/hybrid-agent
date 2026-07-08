@@ -34,3 +34,22 @@ def test_main_stats():
         }
         code = main(["stats"])
     assert code == 0
+
+
+def test_main_loop_max_runs(monkeypatch):
+    run_count = {"n": 0}
+
+    class FakeBrain:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self, request, fresh=False):
+            run_count["n"] += 1
+            return "loop ok"
+
+    monkeypatch.setattr("cli.Brain", FakeBrain)
+    monkeypatch.setattr("cli.time.sleep", lambda _: None)
+
+    code = main(["loop", "check status", "--every", "1s", "--max-runs", "3"])
+    assert code == 0
+    assert run_count["n"] == 3
